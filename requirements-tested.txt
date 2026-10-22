@@ -1,0 +1,7 @@
+# Release validation environment: Windows / Python 3.13.
+# Other Python versions may need requirements.txt followed by verification.
+numpy==2.3.4
+Pillow==12.2.0
+opencv-python==4.13.0.92
+roifile==2024.9.15
+shapely==2.1.2

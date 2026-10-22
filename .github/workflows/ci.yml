@@ -1,0 +1,33 @@
+name: Synthetic ImageJ verification
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+      - run: python -m pip install -r requirements-tested.txt
+      - run: python -m unittest discover -s tests -v
+      - name: Configure an isolated synthetic ImageJ fixture
+        shell: pwsh
+        run: |
+          $testRoot = Join-Path $env:RUNNER_TEMP 'worm-fluorescence-ci'
+          New-Item -ItemType Directory -Path $testRoot | Out-Null
+          $testJar = Join-Path $testRoot 'ij-1.54p.jar'
+          Invoke-WebRequest 'https://repo.maven.apache.org/maven2/net/imagej/ij/1.54p/ij-1.54p.jar' -OutFile $testJar
+          $testPrefs = Join-Path $testRoot 'IJ_Prefs.txt'
+          @('measurements=19','precision=3','prefs.options=0') | Set-Content -LiteralPath $testPrefs -Encoding ascii
+          $testConfig = Join-Path $testRoot 'environment.json'
+          python -X utf8 scripts/environment.py configure --java (Get-Command java).Source --ij-jar $testJar --prefs $testPrefs --font 'C:/Windows/Fonts/arial.ttf' --output $testConfig
+          python -X utf8 scripts/verify_install.py --config $testConfig --output (Join-Path $testRoot 'verification')

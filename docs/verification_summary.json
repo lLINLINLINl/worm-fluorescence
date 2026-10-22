@@ -1,0 +1,53 @@
+{
+  "version": "0.3.0-beta.1",
+  "date": "2026-10-22",
+  "platform": "Windows",
+  "python": "3.13.5",
+  "dependencies": {
+    "numpy": "2.3.4",
+    "Pillow": "12.2.0",
+    "opencv-python": "4.13.0.92",
+    "roifile": "2024.9.15",
+    "shapely": "2.1.2"
+  },
+  "fast_tests_passed": 8,
+  "clean_venv_without_system_site_packages": true,
+  "independent_ImageJ_jar_and_preferences": true,
+  "synthetic_verification": {
+    "ok": true,
+    "synthetic_not_experimental": true,
+    "actual_ImageJ_initial_images": 3,
+    "initial_worms": 3,
+    "fixed_expected_values_checked": true,
+    "independent_original_pixel_audit": true,
+    "overlapping_ROIs_preserved": true,
+    "unconfirmed_rules_rejected": true,
+    "cache_repeat": {
+      "measured_images": 0,
+      "cache_hits": 3,
+      "pending_images": []
+    },
+    "local_change": {
+      "measured_images": 1,
+      "cache_hits": 2,
+      "pending_images": []
+    },
+    "acceptance_invalidated_on_change": true,
+    "partial_label_crop_blocked": true,
+    "crop_revocation_removes_ready": true,
+    "contour_border_regression_passed": true,
+    "configured_preferences_unchanged": true,
+    "isolated_preferences_loading_checked": true,
+    "real_worm_accuracy_evaluated": false
+  },
+  "real_regression_summary": {
+    "images": 5,
+    "full_precision_values_identical": true,
+    "native_CSV_files_byte_identical": 3,
+    "original_files_unchanged": true,
+    "independent_segmentation_accuracy_benchmark": false
+  },
+  "clean_operating_system_or_external_human_tested": false,
+  "browser_interaction_automatically_verified": false,
+  "no_experimental_images_or_ROI_in_repository": true
+}

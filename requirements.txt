@@ -1,0 +1,7 @@
+# Python >=3.10. Measurement-tested locally on Python 3.13.5/Windows.
+# Other supported versions need the synthetic demo and a real ImageJ sample check.
+numpy>=1.26,<3
+Pillow>=10,<13
+opencv-python>=4.8,<6
+roifile>=2024.9.15
+shapely>=2,<3
