@@ -3,7 +3,8 @@ import json
 
 PROFILE = 'RGB8_unweighted_original_pixels_no_background'
 CHOICES = {
-    'border_policy': {'visible_if_near_complete', 'complete_only', 'ask'},
+    'border_policy': {'visible_if_near_complete', 'complete_only', 'ask',
+                      'visible_identifiable_body_exclude_short', 'all_visible_identifiable_segments'},
     'crossing_policy': {'independent_shared_pixels', 'exclude', 'ask'},
     'small_worm_policy': {'include_unless_abnormal', 'exclude', 'ask'},
 }
@@ -34,6 +35,8 @@ def validate(document, require_confirmed=False):
     for key, choices in CHOICES.items():
         if inclusion.get(key) is not None and inclusion[key] not in choices:
             raise ValueError('Invalid inclusion choice: ' + key)
+    if inclusion.get('fragment_policy') not in (None, 'exclude_obvious_short', 'all_identifiable', 'ask'):
+        raise ValueError('Invalid fragment_policy')
     fraction = inclusion.get('minimum_visible_fraction')
     if fraction is not None and (type(fraction) not in (int, float) or not 0 < fraction <= 1):
         raise ValueError('minimum_visible_fraction must be null or a number in (0,1]')

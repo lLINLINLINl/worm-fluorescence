@@ -12,12 +12,16 @@ import metadata
 import review_assets
 import training_crops
 import rules
+import scoped_reviews
+import boundary_questions
+import statistical_eligibility
+from file_operations import replace_with_retry
 
 HERE=Path(__file__).resolve().parent
 IMAGE_EXTS={'.tif','.tiff','.png','.jpg','.jpeg','.bmp'}
 ID_PATTERN=re.compile(r'^[A-Za-z0-9_-]+$')
 PROFILE='RGB8_unweighted_original_pixels_no_background'
-SKILL_VERSION='0.3.0-beta.1'
+SKILL_VERSION='0.4.0-beta.1'
 
 def read(p,default=None):
     return json.loads(p.read_text(encoding='utf-8')) if p.exists() else default
@@ -220,8 +224,8 @@ def measure(args):
         for srcpath,dst in pairs:
             inside(run,dst);dst.parent.mkdir(parents=True,exist_ok=True)
             if dst.exists():
-                saved=inside(run,history/dst.relative_to(run));saved.parent.mkdir(parents=True,exist_ok=True);os.replace(dst,saved)
-            if srcpath is not None:inside(run,srcpath);os.replace(srcpath,dst)
+                saved=inside(run,history/dst.relative_to(run));saved.parent.mkdir(parents=True,exist_ok=True);replace_with_retry(dst,saved)
+            if srcpath is not None:inside(run,srcpath);replace_with_retry(srcpath,dst)
         macro=image_dir(run,src)/'measure.ijm'
         if macro.exists():
             text=macro.read_text(encoding='ascii').replace(json.dumps(stage.as_posix())[1:-1],json.dumps(run.as_posix())[1:-1]);macro.write_text(text,encoding='ascii')
@@ -229,12 +233,7 @@ def measure(args):
     result=dict(measured_images=done,cache_hits=hit,pending_images=pending)
     write(run/'last_run.json',result);return result
 def review(args):
-    run=Path(args.run).resolve();inv,sels=data(run);inv={r['image_id']:r for r in inv};reviews=read(run/'reviews.json',{})
-    if not args.evidence.strip():raise ValueError('Review evidence from the user is required')
-    for id in args.images:
-        if id not in inv or id not in sels:raise ValueError('No contour: '+id)
-        reviews[id]=dict(decision=args.decision,boundary_key=boundary_key(sels[id],inv[id]),evidence=args.evidence,recorded_at_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),meaning='user_acceptance_of_assistant_contours_not_independent_test_ground_truth')
-    write(run/'reviews.json',reviews);return dict(recorded=len(args.images),decision=args.decision)
+    return scoped_reviews.record(sys.modules[__name__],Path(args.run).resolve(),args)
 def export(args):
     run=Path(args.run).resolve();inv,sels=data(run);c=read(run/'workflow.json');p=profile(c);cache=read(run/'cache.json',{});reviews=read(run/'reviews.json',{});records=[];native=[];manifest=[];excluded=[];cards=[];missing=[];audits=0
     lineage=metadata.lineages(run,inv)
@@ -243,7 +242,7 @@ def export(args):
         if not s or s.get('status')!='ready' or not cache_ok(run,cache.get(id),calculation_key(s,src,p)):
             missing.append(id);continue
         if args.audit:audit_image(run,src,s);audits+=1
-        accepted=reviews.get(id,{}).get('decision')=='accept' and reviews[id]['boundary_key']==boundary_key(s,src)
+        accepted=scoped_reviews.frame_accepted(sys.modules[__name__],run,src,s)
         complete=s.get('annotation_coverage')=='complete' and all(e.get('kind')=='non_worm' for e in s.get('excluded',[]))
         status='READY_REVIEWED' if accepted and complete else ('INCOMPLETE_FRAME' if not complete else 'AWAITING_USER_REVIEW')
         src['roi_review_status']='user_accepted_current_boundaries' if accepted else 'assistant_traced_not_explicitly_accepted'
@@ -251,7 +250,8 @@ def export(args):
         src['worm_count']=len(values)
         a.update(image=src,decision=s['decision_source'],excluded=s.get('excluded',[]),user_review=reviews.get(id),human_boundary_verified=accepted)
         for w,aw,v,shape in zip(s['worms'],a['worms'],values,lm['shapes']):
-            aw['note']=w.get('note','');aw['human_boundary_verified']=accepted;v['BoundaryVerified']=accepted;v['InclusionNote']=w.get('note','');shape['flags']['user_boundary_verified']=accepted
+            worm_accepted=scoped_reviews.worm_accepted(sys.modules[__name__],run,src,s,w)
+            aw['note']=w.get('note','');aw['human_boundary_verified']=worm_accepted;v['BoundaryVerified']=worm_accepted;v['InclusionNote']=w.get('note','');shape['flags']['user_boundary_verified']=worm_accepted
         write(d/'annotation.json',a);write(d/'verified_measurements.json',values);write(run/'training/labelme'/(id+'.json'),lm)
         vmap={v['WormID']:v for v in values}
         for row in csv.DictReader((d/'ImageJ_Results.csv').open(encoding='utf-8-sig',newline='')):
@@ -277,7 +277,7 @@ def export(args):
     write(run/'cache.json',cache)
     write(run/'source_inventory.json',inv)
     if inv:csvwrite(run/'source_inventory.csv',inv,list(dict.fromkeys(k for row in inv for k in row)))
-    report=dict(status='COMPLETE' if not missing else 'IN_PROGRESS',images=len(inv),measured_images=len(manifest),worms=len(records),pending_images=missing,boundary_accepted_images=sum(r['BoundaryAccepted'] for r in manifest),training_ready_images=len(ready),incomplete_frame_images=sum(r['TrainingStatus']=='INCOMPLETE_FRAME' for r in manifest),audited_images=audits,training_started=False,profile=PROFILE,quota_savings='not_measured')
+    report=dict(status='COMPLETE' if not missing else 'IN_PROGRESS',images=len(inv),measured_images=len(manifest),worms=len(records),pending_images=missing,boundary_accepted_images=sum(r['BoundaryAccepted'] for r in manifest),training_ready_images=len(ready),incomplete_frame_images=sum(r['TrainingStatus']=='INCOMPLETE_FRAME' for r in manifest),audited_images=audits,training_started=False,profile=PROFILE,quota_savings='not_measured',table_scope='ALL measured contours; use finalize for statistically eligible rows')
     write(run/'audit_summary.json',report)
     page='''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>线虫荧光复核</title><style>body{background:#171b21;color:#eee;max-width:1200px;margin:24px auto;padding:16px;font:16px "Microsoft YaHei",sans-serif}article{border:1px solid #526173;margin:24px 0;padding:16px}img{width:100%;height:auto}a{color:#86d3ff}p{line-height:1.7}</style><h1>线虫荧光与ROI复核</h1><p>原始RGB像素、不扣背景。数值核验与边界验收分别记录；尚未训练模型。</p>'''+''.join(cards)+'</html>'
     (run/'ROI_逐图复核.html').write_text(page,encoding='utf-8')
@@ -289,6 +289,15 @@ def export(args):
 
 def inspect(args):
     return review_assets.build(sys.modules[__name__],Path(args.run).resolve(),args)
+
+def question(args):
+    return boundary_questions.create(sys.modules[__name__],Path(args.run).resolve(),args)
+
+def eligibility(args):
+    return statistical_eligibility.command(sys.modules[__name__],Path(args.run).resolve(),args)
+
+def finalize(args):
+    return statistical_eligibility.finalize(sys.modules[__name__],Path(args.run).resolve(),args)
 
 def crops(args):
     return training_crops.create(sys.modules[__name__],Path(args.run).resolve(),args)
@@ -319,15 +328,23 @@ def rules_command(args):
     confirmed=rules.validate(document)
     if args.file and path.exists():write(run/'history'/('rules_'+stamp()+'.json'),read(path))
     write(path,document)
-    return dict(file=str(path),confirmed=confirmed,measurement_profile=PROFILE,
+    affected=statistical_eligibility.command(sys.modules[__name__],run,argparse.Namespace(file=None)) if (run/'statistical_eligibility.json').is_file() else None
+    return dict(file=str(path),confirmed=confirmed,measurement_profile=PROFILE,eligibility_impact=affected,
                 scope='Policy records guide the annotating agent; they do not automatically infer body boundaries or completeness',
                 next='measure' if confirmed else 'record the user measurement and inclusion choices, then import with rules --file')
 def status(args):
     run=Path(args.run).resolve();inv,sels=data(run)
-    return dict(images=len(inv),selected_images=len(sels),selection_ready=sum(s.get('status')=='ready' for s in sels.values()),last_command=read(run/'last_command.json',{}),last_run=read(run/'last_run.json',{}),summary=read(run/'audit_summary.json',{}),missing_selection=[r['image_id'] for r in inv if r['image_id'] not in sels])
+    decisions=statistical_eligibility.resolve(sys.modules[__name__],run)[3]
+    eligibility_counts={state:sum(r['effective_status']==state for r in decisions.values()) for state in ['include','exclude','pending']}
+    final=read(run/'final_statistics/provenance.json')
+    if final:
+        current=all((run/p).is_file() and sha(run/p)==v for p,v in final.get('source_files_sha256',{}).items()) and final.get('measurement_profile_fingerprint',{}).get('engine_sha256')==sha(HERE/'imagej_engine.py')
+        final={k:final[k] for k in ['status','source_images','included_regions','excluded_regions','pending_regions']}
+        final['current']=current
+    return dict(images=len(inv),selected_images=len(sels),selection_ready=sum(s.get('status')=='ready' for s in sels.values()),statistical_eligibility=eligibility_counts,final_statistics=final,last_command=read(run/'last_command.json',{}),last_run=read(run/'last_run.json',{}),summary=read(run/'audit_summary.json',{}),missing_selection=[r['image_id'] for r in inv if r['image_id'] not in sels])
 def main():
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='command',required=True)
-    for command in ['init','import','adopt','prepare','measure','review','export','status','inspect','crops','crop-review','metadata','rules','set-environment']:
+    for command in ['init','import','adopt','prepare','measure','review','export','status','inspect','crops','crop-review','metadata','rules','set-environment','question','eligibility','finalize']:
         q=sub.add_parser(command);q.add_argument('--run',required=True)
         if command in ['init','import']:q.add_argument('--source',required=True)
         if command in ['import','prepare','measure']:q.add_argument('--images',nargs='*')
@@ -340,12 +357,16 @@ def main():
         if command=='crop-review':
             q.add_argument('--crop-ids',nargs='+',required=True);q.add_argument('--decision',choices=['accept','revise'],required=True);q.add_argument('--coverage',choices=['complete','incomplete'],required=True);q.add_argument('--evidence',required=True)
         if command in ['metadata','rules']:q.add_argument('--file')
+        if command=='eligibility':q.add_argument('--file')
+        if command=='question':
+            q.add_argument('--images',nargs='+',required=True);q.add_argument('--worms',nargs='+');q.add_argument('--box',nargs=4,type=int);q.add_argument('--factor',type=float,default=3);q.add_argument('--markers');q.add_argument('--note',default='')
         if command=='set-environment':q.add_argument('--config',required=True)
         if command=='prepare':
             q.add_argument('--factor',type=float,default=3);q.add_argument('--limit',type=int,default=12)
-        if command=='export':q.add_argument('--audit',action='store_true')
+        if command in ['export','finalize']:q.add_argument('--audit',action='store_true')
         if command=='review':
             q.add_argument('--images',nargs='+',required=True);q.add_argument('--decision',choices=['accept','revise'],required=True);q.add_argument('--evidence',required=True)
+            q.add_argument('--scope',choices=['frame','worm','feature'],default='frame');q.add_argument('--worms',nargs='+');q.add_argument('--feature')
     args=parser.parse_args()
     try:
         if args.command=='init':result=init(args)

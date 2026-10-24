@@ -7,8 +7,9 @@ from urllib.parse import quote
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageEnhance
+import scoped_reviews
 
-VERSION = 4
+VERSION = 5
 POLICY = dict(context_padding_px=32, area_change_fraction=0.20, saturation_fraction=0.01)
 
 
@@ -18,8 +19,7 @@ def box_for(points, width, height, padding):
 
 
 def accepted(wf, run, source, selection):
-    review = wf.read(run / "reviews.json", {}).get(source["image_id"], {})
-    return review.get("decision") == "accept" and review.get("boundary_key") == wf.boundary_key(selection, source)
+    return scoped_reviews.frame_accepted(wf, run, source, selection)
 
 
 def complete(selection):
@@ -96,7 +96,8 @@ def build(wf, run, args):
         boundary_accepted = accepted(wf, run, source, selection)
         measurements = wf.read(directory / "verified_measurements.json")
         image_state = wf.read(run / "cache.json", {})[identifier]
-        key = wf.digest(dict(version=VERSION, boundary=current_key, policy=policy, accepted=boundary_accepted,
+        worm_acceptance = {w['worm_id']: scoped_reviews.worm_accepted(wf, run, source, selection, w) for w in selection['worms']}
+        key = wf.digest(dict(version=VERSION, boundary=current_key, policy=policy, accepted=boundary_accepted, worm_acceptance=worm_acceptance,
                              measurement=image_state["calculation_key"], masks={p: h for p, h in image_state["artifacts"].items()
                              if "instance_masks" in p}))
         previous = cache.get(identifier, {})
@@ -163,7 +164,7 @@ def build(wf, run, args):
             for path in (raw_path, overlay_path):
                 artifacts[path.relative_to(run).as_posix()] = wf.sha(path)
             rows.append(dict(Group=source["group"], ImageID=identifier, SourceFile=source["source_file"], WormID=label,
-                Mean=values["Mean"], Area_px=values["Area_px"], BoundaryAccepted=boundary_accepted,
+                Mean=values["Mean"], Area_px=values["Area_px"], BoundaryAccepted=worm_acceptance[worm['worm_id']],
                 TouchesImageBorder=touches, SaturatedR=float(saturation[0]), SaturatedG=float(saturation[1]),
                 SaturatedB=float(saturation[2]), AnyChannelAtMaxFraction=any_clipped,
                 PreviousArea_px=old_area, AreaChangeFraction=change, Flags=flags, ContextBox=box,

@@ -1,4 +1,4 @@
 interface:
   display_name: "线虫荧光处理"
-  short_description: "逐虫圈选、ImageJ测量、局部复核与训练候选同步，缓存减少重复处理"
-  default_prompt: "使用 $worm-fluorescence 处理指定文件夹的线虫荧光，输出逐虫表格、ROI和训练候选标注，边界不清时立即问我。"
+  short_description: "逐虫圈选与暗边复核、ImageJ测量、统计资格筛选和训练候选同步"
+  default_prompt: "使用 $worm-fluorescence 处理指定文件夹的线虫荧光，检查两侧外缘与暗边，分别记录统计资格和边界确认范围，输出最终强度表、全部ROI和训练候选；边界不清时展示完整图与局部并立即问我。"

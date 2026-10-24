@@ -24,7 +24,7 @@ def build(output):
         if not path.is_file(): continue
         relative = path.relative_to(ROOT)
         if '__pycache__' in relative.parts or path.suffix == '.pyc': continue
-        if relative.as_posix() == 'references/local_environment.json': continue
+        if relative.as_posix() in {'references/local_environment.json', 'references/local_accepted_cases.md'}: continue
         if relative.parts[0] not in DIRECTORIES and relative.as_posix() not in TOP: continue
         if relative.parts[0] == 'docs' and path.suffix.lower() not in {'.md','.png','.json'}: continue
         destination = target / relative

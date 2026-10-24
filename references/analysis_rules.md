@@ -21,12 +21,15 @@ init后analysis_rules.json中的确认状态为false。代理先依据当前用�
 
 | 字段 | 可选值 | 含义 |
 | --- | --- | --- |
-| border_policy | visible_if_near_complete / complete_only / ask | 近完整时测可见区域 / 只纳入完整虫 / 逐图询问 |
+| border_policy | visible_if_near_complete / complete_only / ask / visible_identifiable_body_exclude_short / all_visible_identifiable_segments | 近完整测可见 / 仅完整 / 询问 / 足够长可辨虫身且排除短段 / 所有可辨片段；以实际用户指令为准 |
 | crossing_policy | independent_shared_pixels / exclude / ask | 每虫独立并允许共享像素 / 排除 / 逐图询问 |
 | small_worm_policy | include_unless_abnormal / exclude / ask | 正常小虫纳入 / 排除 / 逐图询问 |
 | minimum_visible_fraction | null或(0,1]的数 | 用户提出的近完整标准；不会自动测出完整比例 |
+| fragment_policy（可选） | exclude_obvious_short / all_identifiable / ask | 排除明显短段 / 所有可辨段 / 询问；旧版未提供可保持null |
 
 这些是给圈选代理的规则记录，不会自动改变轮廓或判断发育。即使有近完整标准，无法判定时也应询问。
+
+纳入正反实例、原话和适用范围可以作为额外字段保存；不要从实例推导未经确认的长度阈值。用[eligibility](eligibility.md)记录逐虫统计资格。更新rules不会改变ImageJ数值缓存，但会列出因规则记录改变而过期的资格，最终统计须重新核定；逐图明确决定和已覆盖的旧规则不能混用。
 
 确认后将两处confirmed设为true，填实际user_quote和适用scope，保存副本并导入：
 

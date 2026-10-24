@@ -43,6 +43,8 @@ configure不会覆盖已有配置或修改ImageJ偏好；另存用--output 新�
 
 完整命令与selections.json格式见[操作说明](references/workflow.md)，规则见[analysis_rules](references/analysis_rules.md)。旧版批次首次测量需补规则记录；本版隔离偏好修正改变了引擎指纹，旧数值缓存会失效并重测，不会静默沿用旧引擎结果。
 
+从v0.3升级到v0.4时保留私人`references/local_environment.json`和`references/local_accepted_cases.md`。v0.4保持v0.3的测量引擎，匹配的数值缓存可复用；新增`eligibility`/`finalize`，原始`export`全量表不自动变成已筛选的最终统计。旧批的实际资格需要依据已有指令补记，不默认纳入所有轮廓；详情见[统计资格](references/eligibility.md)。
+
 ## 分享
 
 scripts/package_skill.py --output 新分享目录生成脱离个人配置的ZIP，不含实验图、结果、权重、密钥或第三方程序。对方仍需配置环境和试测。软件开源不代表AI推理免费，也不保证所有模型得到相同轮廓。

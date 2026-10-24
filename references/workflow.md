@@ -16,6 +16,11 @@ python $wf status --run $runDir
 python $wf inspect --run $runDir --images C_001
 python $wf crops --run $runDir --images C_001
 python $wf metadata --run $runDir
+python $wf question --run $runDir --images C_001 --worms W01 --note '需要判断的具体边界'
+python $wf eligibility --run $runDir
+# 填好生成的资格模板后导入，再输出最终统计
+python $wf eligibility --run $runDir --file '已填写资格.json'
+python $wf finalize --run $runDir --audit
 ```
 
 `init`要求新目录位于源文件夹之外；按源目录第一层子目录保留组名，其他层级仍归入第一层。编号为可安全写入ImageJ宏的ASCII编号，非ASCII组名使用G001等编号并在清单保留实际组名。文件自然排序，实际组别以清单为准；根目录散图不自动推断实验组。只有RGB8单帧通过检查；无支持模式时保留原图、告诉用户差异，并先验证新的测量口径。
@@ -72,4 +77,6 @@ v0.2以来支持`inspect`、`crops`、`crop-review`、`metadata`和`set-environm
 
 `last_run.json`有`measured_images`、`cache_hits`、待圈图；`audit_summary.json`有图片数、虫数、待处理图、已验收图和训练可用图。命令只输出紧凑状态，长列表在文件中保留，终端最多显示前25项。
 
-`reviews.json`保存用户原话和当前`boundary_key`。旧验收不覆盖后续坐标改动；重新修改后须重新展示、确认。`BoundaryVerified`代表用户接受助手轮廓，不等价于独立专家手工真值。使用当前验收图建立训练集时，不能再把它们作为独立测试集自证精度。
+`reviews.json`保存整图用户原话和当前`boundary_key`，`scoped_reviews.json`另记单虫及端点。旧验收不覆盖后续坐标改动；重新修改后须重新展示、确认。`BoundaryVerified`代表用户接受助手轮廓，不等价于独立专家手工真值。使用当前验收图建立训练集时，不能再把它们作为独立测试集自证精度。
+
+v0.4增加测量前`question`、分范围`review`、`eligibility`和`finalize`。完整用法见[外缘检查](boundary_checks.md)和[统计资格](eligibility.md)。旧的`export`保留所有已测轮廓用于技术追溯；`finalize`才输出按逐虫资格筛选的最终统计。旧批不会自动认定所有轮廓纳入，需依据已有实际证据补齐资格。

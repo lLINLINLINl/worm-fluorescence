@@ -53,6 +53,10 @@ def verify(config, output):
     policy['evidence'].update(user_quote='SYNTHETIC SOFTWARE TEST: generated polygons, not experimental acceptance',scope='this generated fixture only')
     write(output/'synthetic_rules.json',policy)
     run('rules','--run',batch,'--file',output/'synthetic_rules.json')
+    question = run('question','--run',batch,'--images','DEMO_001','--worms','W01',
+                   '--note','SYNTHETIC display regression, before measurement')
+    assert not (batch/'imagej').exists()
+    assert all(Path(p).is_file() for p in question['images'][0]['files'].values())
     first = run('measure','--run',batch)
     assert first['measured_images'] == 3 and first['cache_hits'] == 0
     exported = run('export','--run',batch,'--audit')
@@ -69,10 +73,38 @@ def verify(config, output):
     for row in rows:
         area, mean = expected[row['WormID']]
         assert int(row['Area_px']) == area and abs(float(row['Mean'])-mean)<1e-8, row
+    run('eligibility','--run',batch)
+    decisions = read(batch/'statistical_eligibility_template.json')
+    for row in decisions['worms']:
+        short = row['image_id']=='DEMO_001' and row['worm_id']=='W02'
+        row.update(status='exclude' if short else 'include', object_type='worm_fragment' if short else 'worm',
+                   visible_class='short_fragment' if short else 'complete', reason='SYNTHETIC export filtering fixture',
+                   evidence='SYNTHETIC ONLY, not experimental acceptance', decision_source='agent_applied_rule')
+    write(output/'eligibility.json', decisions)
+    run('eligibility','--run',batch,'--file',output/'eligibility.json')
+    final = run('finalize','--run',batch,'--audit')
+    assert final['included_regions']==2 and final['excluded_regions']==1
+    final_rows = list(csv.DictReader((batch/'final_statistics/included_ImageJ_Results.csv').open(encoding='utf-8-sig',newline='')))
+    assert {r['Label'] for r in final_rows} == {'DEMO_001_W01','DEMO_002_W01'}
+    final_excluded = list(csv.DictReader((batch/'final_statistics/excluded_no_intensity.csv').open(encoding='utf-8-sig',newline='')))
+    assert len(final_excluded)==1 and 'Mean' not in final_excluded[0]
+    import zipfile
+    with zipfile.ZipFile(batch/'final_statistics/all_ROIs.zip') as z: assert len(z.namelist())==3
+    with zipfile.ZipFile(batch/'final_statistics/included_ROIs.zip') as z: assert len(z.namelist())==2
     preserved = {p.name:sha(p) for p in (batch/'tables').glob('*.csv')}
     repeat = run('measure','--run',batch)
     assert repeat == dict(measured_images=0,cache_hits=3,pending_images=[])
     assert preserved == {p.name:sha(p) for p in (batch/'tables').glob('*.csv')}
+    run('review','--run',batch,'--images','DEMO_001','--scope','feature','--worms','W01','--feature','tail_B',
+        '--decision','accept','--evidence','SYNTHETIC endpoint only')
+    scoped = run('export','--run',batch)
+    assert scoped['boundary_accepted_images']==0 and scoped['training_ready_images']==0
+    run('review','--run',batch,'--images','DEMO_001','--scope','worm','--worms','W01',
+        '--decision','accept','--evidence','SYNTHETIC W01 contour only')
+    scoped = run('export','--run',batch)
+    assert scoped['boundary_accepted_images']==0 and scoped['training_ready_images']==0
+    scoped_rows = list(csv.DictReader((batch/'tables/ALL_per_worm.csv').open(encoding='utf-8-sig',newline='')))
+    assert {r['WormID'] for r in scoped_rows if r['BoundaryVerified']=='True'}=={'DEMO_001_W01'}
     run('review','--run',batch,'--images','DEMO_001','DEMO_002','DEMO_003','--decision','accept',
         '--evidence','SYNTHETIC fixture only; not real worm boundary acceptance')
     accepted = run('export','--run',batch)
@@ -91,6 +123,8 @@ def verify(config, output):
     assert changed == dict(measured_images=1,cache_hits=2,pending_images=[])
     changed_export = run('export','--run',batch,'--audit')
     assert changed_export['boundary_accepted_images'] == 2
+    refused = run('finalize','--run',batch,ok=False)
+    assert 'pending/stale' in refused['error']
     selections[2]['worms'] = [dict(worm_id='W01',points_original=[[80,100],[110,100],[110,129],[80,129]])]
     write(batch/'selections.json',selections)
     run('measure','--run',batch)
@@ -108,6 +142,10 @@ def verify(config, output):
         partial_label_crop_blocked=True,crop_revocation_removes_ready=True,contour_border_regression_passed=True,
         configured_preferences_unchanged=True,isolated_preferences_loading_checked=True,
         review_page_local_links_valid=True,real_worm_accuracy_evaluated=False)
+    result.update(pre_measure_full_and_detail_views=True,feature_review_not_promoted=True,
+                  worm_review_not_promoted_to_frame=True,final_statistics_filtering_verified=True,
+                  excluded_rows_have_no_intensity=True,excluded_editable_ROIs_retained=True,
+                  stale_eligibility_blocks_final_export=True)
     write(output/'verification.json',result)
     return result
 
