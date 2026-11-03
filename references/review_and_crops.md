@@ -16,6 +16,14 @@
 
 边缘接触同时检查轮廓端点与实际掩膜边缘；ImageJ栅格化可能不占据底边/右边最后一行，不能仅用最后一行像素是否非零判断轮廓是否触边。
 
+### 圈线修订的数值影响
+
+复核页和`tables/qc_flags.csv`增加`PreviousMean`、`MeanChange`、`MeanChangeFraction`及`PreviousStatisticsStatus/StatisticsStatus/StatisticsStatusChanged`，与已有的`PreviousArea_px/AreaChangeFraction`一起对照。Mean仍来自已核验的原始像素测量，不根据预览亮度重算。
+
+对照限同一源图校验值和稳定虫号。历史面积或Mean没有记录时留空，不填0；历史Mean为0时保留绝对差，相对差留空。旧版只有面积基线时继续保留面积对照，从本版首次有效复核开始记录Mean及资格基线。源图变化后重新建立基线，不跨源图比较。
+
+相同边界的重复查看、资格变更或显示参数调整保留已有的面积/Mean修订对照，不将历史值偷偷推进到当前值。资格变更另与最近状态比较；没有圈线修订基线时，可用此前同边界快照核对数值未变。资格单独变化只刷新复核报告，不重测；已过期的资格显示`pending`。`not_recorded`表示旧批没有资格记录，不等于纳入或排除。数值变化和面积提示都不能代替边界认可或自动剔除。
+
 ## 训练候选裁剪
 
 1. `crops --run 输出目录 --images 图片编号`根据已测ROI生成候选。所有候选在`training/crop_candidates`；当前状态见`training/crop_manifest.csv`和`training/crop_review.html`。

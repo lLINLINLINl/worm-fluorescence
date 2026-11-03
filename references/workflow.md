@@ -63,6 +63,43 @@ v0.2以来支持`inspect`、`crops`、`crop-review`、`metadata`和`set-environm
 - `excluded`记录`location`、`reason`、`kind`。只有明确非虫物体才写`kind=non_worm`；虫/虫段或不确定对象写`worm_fragment`/`unknown`，整图会被挡在直接训练清单之外。
 - 不能确定的图保持`pending`，不写猜测轮廓。未纳入虫的空图只有经过目视确认后才可用`worms=[]`且`empty_reviewed=true`；是否适合训练还取决于全图有没有未标虫段。
 
+## 预览拼图坐标转换
+
+单幅无边框预览仍可使用`points_view`。若在带标题或并排拼图上取点，使用独立辅助脚本先转原图坐标，不把画布坐标直接填进`points_view`。
+
+输入为轮廓列表，每图含`preview_transform`，每虫仅提供`points_canvas`。例如画布2000×780、右侧图像面板起点(1000,26)、面板1000×754：
+
+```json
+{
+  "canvas_size": [2000,780],
+  "panel_origin": [1000,26],
+  "panel_size": [1000,754]
+}
+```
+
+以上只定义显示变换，不是示例ROI。面板尺寸须来自实际生成记录；不从截图猜测。`points_canvas`中每个点必须位于该面板像素中心范围内，标题栏、邻图、非有限数值或混合坐标字段均报错，不裁点补救。
+
+```powershell
+python '技能目录/scripts/preview_coordinates.py' --inventory '本批/source_inventory.json' --input '拼图坐标.json' --output '原图坐标_新文件.json'
+```
+
+输出仅新建文件，保留变换和来源指纹供追溯；不自动覆盖selections.json。将输出轮廓叠回原始图片，核对两侧和头尾后再采用。像素中心端点映射为`(原尺寸-1)/(面板尺寸-1)`；当前只支持无旋转、无翻转的缩放与平移。
+
+## 交付偏好与刷新范围
+
+全精度主表`included_precise.csv`固定列序为：`Group,ImageID,SourceFile,WormID,Mean,Min,Max,Area_px,Area_ImageJ,AreaUnit,BackgroundSubtracted,Method,InclusionNote,BoundaryVerified`。CSV数值不按展示位数舍入；`included_ImageJ_Results.csv`保留原生显示精度，不能据它重新构造全精度值。无纳入项时仍保留完整表头。
+
+可在本机`references/local_preferences.json`设置`{"precise_csv_name":"希望使用的文件名.csv"}`。finalize在默认全精度表外生成逐字节相同的命名副本，并让复核页主链接指向它；文件名只能是安全的CSV基本名。本机偏好不进入Git或分享包，不替其他用户设定偏好。Excel仅按需另行生成。
+
+| 变更 | 所需操作 |
+|---|---|
+| 轮廓/源图变化 | 源图变化另建批次；轮廓变化只measure受影响图，再重新判断受影响资格、导出 |
+| 仅纳入决定、质量标记或可见类型改变 | eligibility后finalize；数值不重测，改变纳入颜色的整图才重绘 |
+| 仅理由文字、CSV文件名 | 资格理由通过eligibility导入；文件名改本机偏好，然后finalize；不重测，不重绘未变整图 |
+| 局部框、增强显示、问题标记 | 对指定图运行inspect/question；不启动Measure，不重复生成整批视图 |
+
+finalize仍校验测量有效性和文件指纹；完整图按源图、当前轮廓、纳入颜色、字体及显示版本缓存。只有缓存指纹与文件校验值均匹配才复用，损坏或缺失只重绘对应图；`preview_generated/preview_reused`记录实际数量。修改代码的渲染方式时须提升显示版本。不要为提速跳过来源核验、独立计算核验或有必要的看图。
+
 ## 已有批次和修改
 
 `import --source 旧批次 --run 新目录 --images 编号`只导入来源与轮廓，不凭空导入验收状态或测量缓存，适合小规模实际验证。`adopt --run 旧格式批次`仅在每图已有实际ImageJ宏、运行日志、原生逐虫CSV和掩膜时使用；它独立核验原图、ROI、标注、掩膜、像素统计和原生行后才登记缓存，不启动新的Java测量，也不自动接受边界。
@@ -76,6 +113,8 @@ v0.2以来支持`inspect`、`crops`、`crop-review`、`metadata`和`set-environm
 ## 状态和交付
 
 `last_run.json`有`measured_images`、`cache_hits`、待圈图；`audit_summary.json`有图片数、虫数、待处理图、已验收图和训练可用图。命令只输出紧凑状态，长列表在文件中保留，终端最多显示前25项。
+
+局部复核报告还保留同一源图、同一虫号修订前后的面积、Mean和统计资格。仅改变资格或显示设置不改变测量缓存；旧记录无历史Mean时留空。比较含义及兼容范围见[修订影响](review_and_crops.md#圈线修订的数值影响)。
 
 `reviews.json`保存整图用户原话和当前`boundary_key`，`scoped_reviews.json`另记单虫及端点。旧验收不覆盖后续坐标改动；重新修改后须重新展示、确认。`BoundaryVerified`代表用户接受助手轮廓，不等价于独立专家手工真值。使用当前验收图建立训练集时，不能再把它们作为独立测试集自证精度。
 

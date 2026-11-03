@@ -21,7 +21,7 @@ HERE=Path(__file__).resolve().parent
 IMAGE_EXTS={'.tif','.tiff','.png','.jpg','.jpeg','.bmp'}
 ID_PATTERN=re.compile(r'^[A-Za-z0-9_-]+$')
 PROFILE='RGB8_unweighted_original_pixels_no_background'
-SKILL_VERSION='0.4.0-beta.1'
+SKILL_VERSION='0.4.0-beta.4'
 
 def read(p,default=None):
     return json.loads(p.read_text(encoding='utf-8')) if p.exists() else default

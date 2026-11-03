@@ -2,7 +2,6 @@
 from pathlib import Path
 import html
 import json
-import os
 import shutil
 import time
 
@@ -11,6 +10,7 @@ from PIL import Image, ImageDraw, ImageEnhance
 
 import metadata
 import review_assets
+from file_operations import replace_with_retry
 
 VERSION = 1
 
@@ -191,7 +191,7 @@ def refresh(wf, run):
             if path.is_file() and path not in desired:
                 destination = wf.inside(run, run / "history" / ("stale_crops_" + wf.stamp()) / path.relative_to(run))
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(wf.inside(run, path), destination)
+                replace_with_retry(wf.inside(run, path), destination)
     wf.write(run / "training/crop_manifest.json", rows)
     csv_rows = [{key: (json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value)
                  for key, value in row.items()} for row in rows]

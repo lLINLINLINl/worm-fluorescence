@@ -4,14 +4,17 @@ import csv
 import html
 import os
 import statistics
+import shutil
 import time
 import zipfile
+from urllib.parse import quote
 
 from PIL import Image, ImageDraw, ImageEnhance
 
 import boundary_questions
 import rules
 import scoped_reviews
+import delivery_preferences
 from file_operations import replace_with_retry
 
 STATUSES = {'include', 'exclude', 'pending'}
@@ -19,7 +22,11 @@ IDENTITIES = {'worm', 'worm_fragment', 'uncertain'}
 VISIBLE = {'complete', 'near_complete', 'long_body', 'short_fragment', 'uncertain'}
 FIELDS = ['Group', 'ImageID', 'SourceFile', 'Label', 'Area', 'Mean', 'Min', 'Max', 'AreaUnit', 'Area_px']
 DECISION_FIELDS = ['Group', 'ImageID', 'WormID', 'SourceFile', 'ObjectType', 'VisibleClass', 'StatisticsStatus',
-                   'Reason', 'Evidence', 'DecisionSource', 'BoundaryAccepted', 'DecisionCurrent']
+                   'Reason', 'Evidence', 'DecisionSource', 'BoundaryAccepted', 'DecisionCurrent',
+                   'QualityFlags', 'MeasurementCaveat']
+PRECISE_FIELDS = ['Group', 'ImageID', 'SourceFile', 'WormID', 'Mean', 'Min', 'Max', 'Area_px',
+                  'Area_ImageJ', 'AreaUnit', 'BackgroundSubtracted', 'Method', 'InclusionNote', 'BoundaryVerified']
+FRAME_RENDER_VERSION = 1
 
 
 def validate_row(row):
@@ -32,6 +39,30 @@ def validate_row(row):
             raise ValueError('Distinguish a user decision from application of the batch rule')
     if row['status'] == 'include' and (row['object_type'] == 'uncertain' or row['visible_class'] == 'uncertain'):
         raise ValueError('Uncertain identity/visibility cannot enter final statistics')
+    flags = row.get('quality_flags', [])
+    if not isinstance(flags, list) or any(not isinstance(x, str) or x not in {'motion_blur'} for x in flags) or len(set(flags)) != len(flags):
+        raise ValueError('Invalid quality_flags; supported flag: motion_blur')
+    caveat = row.get('measurement_caveat', '')
+    if not isinstance(caveat, str) or ('motion_blur' in flags and not caveat.strip()):
+        raise ValueError('Motion blur requires an explicit measurement_caveat')
+
+
+def frame_asset(wf, source, selection, colors, font, font_key, destination, previous, old_path):
+    """Reuse only byte-verified display assets; never skip measurement validity checks."""
+    key = wf.digest(dict(version=FRAME_RENDER_VERSION, source=source['source_sha256'],
+                         boundary=wf.boundary_key(selection, source), colors=colors, font=font_key, factor=3))
+    if (previous.get('key') == key and old_path.is_file()
+            and wf.sha(old_path) == previous.get('sha256')):
+        shutil.copy2(old_path, destination)
+        return dict(key=key, sha256=previous['sha256']), True
+    contours = [(w['worm_id'], wf.points(selection, source, w)) for w in selection['worms']]
+    with Image.open(source['source_path']) as original:
+        preview = boundary_questions.overlay(ImageEnhance.Brightness(original).enhance(3), contours, font, colors)
+    legend = Image.new('RGB', (preview.width, preview.height + 38), '#111820')
+    legend.paste(preview, (0, 0))
+    ImageDraw.Draw(legend).text((10, preview.height + 6), '纳入 Include = green; 排除 Exclude = gray', fill='#ffffff', font=font)
+    legend.save(destination)
+    return dict(key=key, sha256=wf.sha(destination)), False
 
 
 def publish(wf, run, stage):
@@ -143,10 +174,16 @@ def finalize(wf, run, args):
                          + str(dict(images=missing[:25], regions=pending[:25])))
     profile = wf.profile(wf.read(run / 'workflow.json'))
     cache = wf.read(run / 'cache.json', {})
+    preferences = delivery_preferences.load()
     native, precise, decisions, excluded, cards, source_files = [], [], [], [], [], {}
+    old_final = run / 'final_statistics'
+    previous_frames = wf.read(old_final / 'provenance.json', {}).get('preview_frames', {})
+    frame_records, frame_generated, frame_reused = {}, 0, 0
     stage = wf.inside(run, run / '.staging' / ('final_statistics_' + wf.stamp()))
     stage.mkdir(parents=True)
     font = boundary_questions.font_for(run, wf)
+    font_path = Path(wf.read(run / 'workflow.json').get('font', ''))
+    font_key = wf.sha(font_path) if font_path.is_file() else str(font_path)
     with zipfile.ZipFile(stage / 'included_ROIs.zip', 'w', compression=zipfile.ZIP_DEFLATED) as selected_zip, \
             zipfile.ZipFile(stage / 'all_ROIs.zip', 'w', compression=zipfile.ZIP_DEFLATED) as all_zip:
         for source in inventory:
@@ -164,7 +201,7 @@ def finalize(wf, run, args):
             labels = {identifier + '_' + w['worm_id'] for w in selection['worms']}
             if set(rows) != labels or len(raw_rows) != len(labels) or set(values) != labels:
                 raise ValueError('Native measurement IDs do not match contours: ' + identifier)
-            contours, colors, lines = [], {}, []
+            colors, lines = {}, []
             for worm in selection['worms']:
                 key = (identifier, worm['worm_id'])
                 label = identifier + '_' + worm['worm_id']
@@ -175,7 +212,9 @@ def finalize(wf, run, args):
                               SourceFile=source['source_file'], ObjectType=record['object_type'],
                               VisibleClass=record['visible_class'], StatisticsStatus=record['effective_status'],
                               Reason=record['reason'], Evidence=record['evidence'], DecisionSource=record['decision_source'],
-                              BoundaryAccepted=boundary_ok, DecisionCurrent=True)
+                              BoundaryAccepted=boundary_ok, DecisionCurrent=True,
+                              QualityFlags=';'.join(record.get('quality_flags', [])),
+                              MeasurementCaveat=record.get('measurement_caveat', ''))
                 decisions.append(status)
                 value, raw = values[label], rows[label]
                 roi = directory / (label + '.roi')
@@ -189,24 +228,28 @@ def finalize(wf, run, args):
                     selected_zip.write(roi, identifier + '/' + roi.name)
                 else:
                     excluded.append(status)
-                contours.append((worm['worm_id'], wf.points(selection, source, worm)))
                 colors[worm['worm_id']] = '#40edb3' if included else '#c1c1c1'
                 lines.append('<li>' + html.escape(worm['worm_id'] + ('：纳入 Mean=' + raw['Mean'] if included else '：排除强度统计')
-                                                     + '；' + record['reason']) + '</li>')
+                                                     + '；' + record['reason'] +
+                                                     ('；质量标记：' + status['QualityFlags'] + '；' + status['MeasurementCaveat']
+                                                      if status['QualityFlags'] else '')) + '</li>')
             for name in ('ImageJ_Results.csv', 'verified_measurements.json'):
                 path = directory / name
                 source_files[path.relative_to(run).as_posix()] = wf.sha(path)
-            with Image.open(source['source_path']) as original:
-                preview = boundary_questions.overlay(ImageEnhance.Brightness(original).enhance(3), contours, font, colors)
-            legend = Image.new('RGB', (preview.width, preview.height + 38), '#111820')
-            legend.paste(preview, (0, 0))
-            ImageDraw.Draw(legend).text((10, preview.height + 6), '纳入 Include = green; 排除 Exclude = gray', fill='#ffffff', font=font)
             (stage / 'full_frames').mkdir(exist_ok=True)
-            legend.save(stage / 'full_frames' / (identifier + '.png'))
+            frame_path = Path('full_frames') / (identifier + '.png')
+            info, reused = frame_asset(wf, source, selection, colors, font, font_key, stage / frame_path,
+                                       previous_frames.get(identifier, {}), old_final / frame_path)
+            frame_records[identifier] = info
+            frame_reused += int(reused)
+            frame_generated += int(not reused)
             cards.append('<article><h2>' + html.escape(identifier + ' / ' + source['source_file']) + '</h2><img src="full_frames/'
                          + identifier + '.png"><ul>' + ''.join(lines) + '</ul></article>')
     wf.csvwrite(stage / 'included_ImageJ_Results.csv', native, FIELDS)
-    wf.csvwrite(stage / 'included_precise.csv', precise, list(precise[0]) if precise else ['Group', 'ImageID', 'WormID', 'Mean'])
+    wf.csvwrite(stage / 'included_precise.csv', precise, PRECISE_FIELDS)
+    primary_csv = preferences['precise_csv_name'] or 'included_precise.csv'
+    if primary_csv != 'included_precise.csv':
+        shutil.copy2(stage / 'included_precise.csv', stage / primary_csv)
     wf.csvwrite(stage / 'all_decisions.csv', decisions, DECISION_FIELDS)
     wf.csvwrite(stage / 'excluded_no_intensity.csv', excluded, DECISION_FIELDS)
     summary = []
@@ -223,7 +266,8 @@ def finalize(wf, run, args):
             'article{border:1px solid #777;padding:16px;margin:24px 0}img{width:100%}a{color:#86d3ff}</style>'
             '<h1>最终统计与完整图复核</h1><p>绿色纳入，灰色排除；全部轮廓保留。统计资格与边界认可分别记录。</p>'
             '<p>Mean为原始RGB非加权亮度、不扣背景；Area_px为像素面积。区域数不代表独立动物或生物学重复。</p>'
-            '<p><a href="included_ImageJ_Results.csv">纳入统计表</a> · <a href="all_decisions.csv">全部资格</a> · '
+            '<p><a href="' + quote(primary_csv, safe='') + '">最终统计（原始精度）</a> · '
+            '<a href="included_ImageJ_Results.csv">原生ImageJ表（显示精度）</a> · <a href="all_decisions.csv">全部资格</a> · '
             '<a href="excluded_no_intensity.csv">排除清单（无强度值）</a> · <a href="included_ROIs.zip">纳入ROI</a> · '
             '<a href="all_ROIs.zip">全部ROI</a></p>' + ''.join(cards) + '</html>')
     (stage / 'index.html').write_text(page, encoding='utf-8')
@@ -237,6 +281,8 @@ def finalize(wf, run, args):
                   excluded_regions=len(excluded), pending_regions=0, measurement_changed=False,
                   boundary_acceptance_required_for_statistics=False, training_started=False,
                   measurement_profile_fingerprint=profile,
+                  primary_csv=primary_csv, preview_frames=frame_records,
+                  preview_generated=frame_generated, preview_reused=frame_reused,
                   source_files_sha256=source_files,
                   note='Raw imagej/ and tables/ retain all measured regions; final_statistics/ only includes eligible regions.')
     wf.write(stage / 'provenance.json', result)

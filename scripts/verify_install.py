@@ -123,6 +123,14 @@ def verify(config, output):
     assert changed == dict(measured_images=1,cache_hits=2,pending_images=[])
     changed_export = run('export','--run',batch,'--audit')
     assert changed_export['boundary_accepted_images'] == 2
+    revision_rows = list(csv.DictReader((batch/'tables/qc_flags.csv').open(encoding='utf-8-sig',newline='')))
+    revision = next(row for row in revision_rows if row.get('WormID')=='DEMO_001_W01')
+    assert float(revision['PreviousArea_px']) == expected['DEMO_001_W01'][0]
+    assert abs(float(revision['PreviousMean']) - expected['DEMO_001_W01'][1]) < 1e-8
+    assert abs(float(revision['MeanChange']) - (float(revision['Mean']) - float(revision['PreviousMean']))) < 1e-8
+    assert revision['PreviousStatisticsStatus']=='include' and revision['StatisticsStatus']=='pending'
+    unchanged = next(row for row in revision_rows if row.get('WormID')=='DEMO_001_W02')
+    assert float(unchanged['MeanChange'])==0 and unchanged['StatisticsStatus']=='exclude'
     refused = run('finalize','--run',batch,ok=False)
     assert 'pending/stale' in refused['error']
     selections[2]['worms'] = [dict(worm_id='W01',points_original=[[80,100],[110,100],[110,129],[80,129]])]
@@ -145,7 +153,8 @@ def verify(config, output):
     result.update(pre_measure_full_and_detail_views=True,feature_review_not_promoted=True,
                   worm_review_not_promoted_to_frame=True,final_statistics_filtering_verified=True,
                   excluded_rows_have_no_intensity=True,excluded_editable_ROIs_retained=True,
-                  stale_eligibility_blocks_final_export=True)
+                  stale_eligibility_blocks_final_export=True,revision_area_and_mean_comparison=True,
+                  revision_eligibility_comparison_is_read_only=True)
     write(output/'verification.json',result)
     return result
 

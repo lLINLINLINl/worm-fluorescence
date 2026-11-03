@@ -1,5 +1,6 @@
 references/local_environment.json
 references/local_accepted_cases.md
+references/local_preferences.json
 .env
 .env.*
 !.env.example

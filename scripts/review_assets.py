@@ -8,8 +8,9 @@ from urllib.parse import quote
 import numpy as np
 from PIL import Image, ImageDraw, ImageEnhance
 import scoped_reviews
+import statistical_eligibility
 
-VERSION = 5
+VERSION = 6
 POLICY = dict(context_padding_px=32, area_change_fraction=0.20, saturation_fraction=0.01)
 
 
@@ -32,6 +33,21 @@ def valid(wf, run, source, selection, profile):
         run, wf.read(run / "cache.json", {}).get(source["image_id"]), wf.calculation_key(selection, source, profile)))
 
 
+def comparison_text(row):
+    """Display changes without interpreting them as better boundaries or exclusion."""
+    old_area, old_mean = row.get('PreviousArea_px'), row.get('PreviousMean')
+    area = ('历史面积未记录；当前 ' + str(row['Area_px']) if old_area is None else
+            f"像素面积 {old_area} → {row['Area_px']}（变化 {row['Area_px'] - old_area:+}）")
+    mean = ('历史Mean未记录；当前 ' + format(row['Mean'], '.6g') if old_mean is None else
+            f"Mean {old_mean:.6g} → {row['Mean']:.6g}（变化 {row['MeanChange']:+.6g}）")
+    names = {'include': '纳入', 'exclude': '排除', 'pending': '待定或过期', 'not_recorded': '未记录'}
+    status = names[row['StatisticsStatus']]
+    old_status = row.get('PreviousStatisticsStatus')
+    status = ('历史资格未记录；当前 ' + status if old_status is None else
+              names[old_status] + ' → ' + status)
+    return '；'.join((area, mean, '统计资格：' + status))
+
+
 def render_card(row):
     escape = html.escape
     link = lambda value: quote(value, safe="/")
@@ -50,7 +66,8 @@ def render_card(row):
     return ('<article class="' + ('warn' if row["Flags"] else '') + '"><h2>' + escape(row["WormID"]) +
         ' · ' + escape(row["Group"]) + '</h2><p>' + escape(row["SourceFile"]) + '</p><p>Mean（平均亮度）=' +
         f'{row["Mean"]:.3f}' + '；像素面积=' + str(row["Area_px"]) + '；当前边界验收：' +
-        ('已认可' if row["BoundaryAccepted"] else '待确认') + '</p><p class="flags">' + escape(flags) +
+        ('已认可' if row["BoundaryAccepted"] else '待确认') + '</p><p>' + escape(comparison_text(row)) +
+        '</p><p class="flags">' + escape(flags) +
         '</p><div class="context" style="aspect-ratio:' + str(width) + '/' + str(height) + '"><img loading="lazy" src="' +
         link(row["RawContext"]) + '" alt="原图局部，无重采样"><svg viewBox="0 0 ' + str(width) + ' ' + str(height) +
         '">' + ''.join(shapes) + '</svg></div><p>粉色：本虫；青色：邻近已标虫。原图局部坐标 ' + escape(str(box)) +
@@ -77,6 +94,10 @@ def build(wf, run, args):
     destination.mkdir(parents=True, exist_ok=True)
     cache = wf.read(run / "review/assets_cache.json", {})
     references = wf.read(run / "review/area_references.json", {})
+    # Resolve effective eligibility read-only; stale decisions stay pending.
+    # A legacy batch without decisions has no inferred statistical qualification.
+    eligibility = (statistical_eligibility.resolve(wf, run)[3]
+                   if (run / 'statistical_eligibility.json').is_file() else {})
     all_rows, generated, hits = [], 0, 0
     for source in inventory:
         identifier = source["image_id"]
@@ -97,7 +118,11 @@ def build(wf, run, args):
         measurements = wf.read(directory / "verified_measurements.json")
         image_state = wf.read(run / "cache.json", {})[identifier]
         worm_acceptance = {w['worm_id']: scoped_reviews.worm_accepted(wf, run, source, selection, w) for w in selection['worms']}
+        statistics_statuses = {identifier + '_' + worm['worm_id']:
+                              eligibility.get((identifier, worm['worm_id']), {}).get('effective_status', 'not_recorded')
+                              for worm in selection['worms']}
         key = wf.digest(dict(version=VERSION, boundary=current_key, policy=policy, accepted=boundary_accepted, worm_acceptance=worm_acceptance,
+                             statistics_statuses=statistics_statuses,
                              measurement=image_state["calculation_key"], masks={p: h for p, h in image_state["artifacts"].items()
                              if "instance_masks" in p}))
         previous = cache.get(identifier, {})
@@ -115,10 +140,23 @@ def build(wf, run, args):
         measurement_map = {v["WormID"]: v for v in measurements}
         ref = references.get(identifier, {})
         same_source = ref.get("source_sha256") == source["source_sha256"]
-        if same_source and ref.get("boundary_key") == current_key:
+        same_boundary = same_source and ref.get('boundary_key') == current_key
+        same_statuses = same_boundary and ('statistics_statuses' not in ref or
+                                           ref['statistics_statuses'] == statistics_statuses)
+        if same_boundary:
             comparison = ref.get("comparison", {})
+            previous_means = ref.get('comparison_means', {})
+            # A later decision must not erase the numerical boundary revision.
+            # With no revision baseline, an eligibility-only event can still
+            # demonstrate that the existing measurement is unchanged.
+            if not same_statuses and not comparison and not previous_means:
+                comparison = ref.get('areas', {})
+                previous_means = ref.get('means', {})
         else:
             comparison = ref.get("areas", {}) if same_source else {}
+            previous_means = ref.get('means', {}) if same_source else {}
+        previous_statuses = (ref.get('comparison_statistics_statuses', {}) if same_statuses else
+                             ref.get('statistics_statuses', {}) if same_source else {})
         rows, artifacts = [], {}
         contours = [(worm, wf.points(selection, source, worm)) for worm in selection["worms"]]
         for worm, points in contours:
@@ -142,6 +180,11 @@ def build(wf, run, args):
                 flags.append("存在通道亮度截顶：检查曝光/导出，提示不等于已判定过曝")
             old_area = comparison.get(label)
             change = (values["Area_px"] - old_area) / old_area if old_area else None
+            old_mean = previous_means.get(label)
+            mean_change = values['Mean'] - old_mean if old_mean is not None else None
+            mean_fraction = mean_change / old_mean if old_mean not in (None, 0) else None
+            old_status = previous_statuses.get(label)
+            status_changed = old_status != statistics_statuses[label] if old_status is not None else None
             if change is not None and abs(change) >= policy["area_change_fraction"]:
                 flags.append("同图同编号ROI面积变化较大：检查边界修正及编号对应")
             box = box_for(points, width, height, policy["context_padding_px"])
@@ -167,12 +210,17 @@ def build(wf, run, args):
                 Mean=values["Mean"], Area_px=values["Area_px"], BoundaryAccepted=worm_acceptance[worm['worm_id']],
                 TouchesImageBorder=touches, SaturatedR=float(saturation[0]), SaturatedG=float(saturation[1]),
                 SaturatedB=float(saturation[2]), AnyChannelAtMaxFraction=any_clipped,
-                PreviousArea_px=old_area, AreaChangeFraction=change, Flags=flags, ContextBox=box,
+                PreviousArea_px=old_area, AreaChangeFraction=change,
+                PreviousMean=old_mean, MeanChange=mean_change, MeanChangeFraction=mean_fraction,
+                PreviousStatisticsStatus=old_status, StatisticsStatus=statistics_statuses[label],
+                StatisticsStatusChanged=status_changed, Flags=flags, ContextBox=box,
                 ContextContours=context_contours, RawContext=raw_path.relative_to(run).as_posix(),
                 OverlayContext=overlay_path.relative_to(run).as_posix(), FullPreview=(directory / "ROI_preview.png").relative_to(run).as_posix(),
                 ROISet=(directory / (identifier + "_RoiSet.zip")).relative_to(run).as_posix()))
         references[identifier] = dict(source_sha256=source["source_sha256"], boundary_key=current_key,
-                                    areas={v["WormID"]: v["Area_px"] for v in measurements}, comparison=comparison)
+                                    areas={v["WormID"]: v["Area_px"] for v in measurements}, comparison=comparison,
+                                    means={v['WormID']: v['Mean'] for v in measurements}, comparison_means=previous_means,
+                                    statistics_statuses=statistics_statuses, comparison_statistics_statuses=previous_statuses)
         cache[identifier] = dict(key=key, artifacts=artifacts, rows=rows)
         all_rows.extend(rows)
         generated += 1
@@ -193,6 +241,7 @@ def build(wf, run, args):
     page = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>逐虫局部复核</title>
 <style>body{background:#171b21;color:#eee;max-width:1250px;margin:20px auto;padding:14px;font:16px "Microsoft YaHei",sans-serif}article{border:1px solid #526173;margin:22px 0;padding:14px}.warn{border-color:#ffb75c}a{color:#86d3ff}.context{position:relative;max-width:100%;overflow:hidden}.context img{display:block;width:100%;height:100%;filter:brightness(2)}svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.controls{position:sticky;top:0;background:#171b21;padding:12px;z-index:2}.flags{color:#ffc675}button,input{font:inherit}p{overflow-wrap:anywhere}</style>
 <h1>线虫荧光与ROI逐虫复核</h1><p>保留组别、文件名和数值显示。原始RGB像素、不扣背景；局部图不重采样。质控仅提示，不自动改边界、剔除小虫或证明边界准确。</p>
+<p>修订对照按同一源图、同一虫号记录面积、Mean和统计资格。历史未记录的值留空；Mean历史为0时不计算相对变化。数值变化不证明圈线更准确，也不自动改变统计资格。</p>
 <p><a href="tables/ALL_ImageJ_Results.csv">全部ImageJ结果</a> · <a href="tables/qc_flags.csv">质控提示表</a> · <a href="training/dataset_manifest.csv">训练素材清单</a> · __CROP_LINK__</p>
 <div class="controls"><label><input id="outlines" type="checkbox" checked>显示轮廓</label>　<label>显示亮度 <input id="brightness" type="range" min="1" max="4" step="0.25" value="2"><span id="factor">2</span>倍</label>　<button id="raw">原始亮度</button></div>'''
     crop_link = ('<a href="training/crop_review.html">训练候选裁剪复核</a>' if (run/'training/crop_review.html').is_file()

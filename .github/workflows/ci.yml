@@ -19,6 +19,9 @@ jobs:
           java-version: '8'
       - run: python -m pip install -r requirements-tested.txt
       - run: python -m unittest discover -s tests -v
+      - name: Verify the public file allowlist and archive
+        shell: pwsh
+        run: python -X utf8 scripts/package_skill.py --output (Join-Path $env:RUNNER_TEMP 'worm-fluorescence-public-package')
       - name: Configure an isolated synthetic ImageJ fixture
         shell: pwsh
         run: |
