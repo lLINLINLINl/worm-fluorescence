@@ -2,7 +2,7 @@
 name: worm-fluorescence
 description: 处理线虫荧光显微图片：逐虫描边、原始像素ImageJ测量、可编辑ROI及YOLO/Labelme训练候选同步，支持局部修订和缓存复用。用于圈虫、批处理荧光和积累分割标注。
 metadata:
-  version: "0.4.0-beta.4"
+  version: "1.0.0"
 ---
 
 # 线虫荧光处理

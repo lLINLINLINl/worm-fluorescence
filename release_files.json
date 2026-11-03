@@ -9,6 +9,7 @@
     "README.md",
     "SKILL.md",
     "agents/openai.yaml",
+    "docs/COMPATIBILITY.md",
     "docs/VALIDATION.md",
     "docs/verification_summary.json",
     "examples/make_demo.py",
