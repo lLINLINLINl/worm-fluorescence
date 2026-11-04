@@ -2,7 +2,7 @@
 
 本项目由lLINLINLINl在实际线虫荧光处理过程中，使用AI辅助编写和修订。规则与软件实现均需独立复核，不把AI生成等同于科学正确。
 
-仓库从独立技能目录整理，未带入原研究工作区的Git历史、实验图、结果或权重。早期曾使用和比较[cyssayyes-source/worm_deep](https://github.com/cyssayyes-source/worm_deep)；本技能不导入其模块、不调用其脚本或权重，常规运行无须安装它，也不声称拥有其代码或模型。
+仓库从独立技能目录整理，未带入原研究工作区的Git历史、实验图、结果或权重。早期曾使用和比较[cyssayyes-source/worm_deep](https://github.com/cyssayyes-source/worm_deep)；本项目不声称拥有其代码或模型。
 
 运行依赖由使用者单独安装，保留各自许可；本项目MIT许可不替代第三方许可：
 
